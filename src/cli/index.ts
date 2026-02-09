@@ -9,6 +9,8 @@ import { formatUSD, formatEUR, formatPercent, formatDuration, shortenHash } from
 import { ForexPoller } from '../forex/poller.js';
 import { SpreadEngine } from '../engine/spread-engine.js';
 import { PnlTracker } from '../engine/pnl-tracker.js';
+import { RecycleManager, RECYCLE_STATES } from '../engine/recycle-manager.js';
+import { RevolutMatcher } from '../revolut/matcher.js';
 
 const program = new Command();
 
@@ -205,6 +207,120 @@ program
       spreadEngine.setCurrentSpread(depositId, spreadPercent);
       console.log(`\nSpread for deposit #${depositId} set to ${formatPercent(spreadPercent)}`);
       console.log('Note: On-chain transaction not yet implemented (Phase 4)\n');
+    });
+  });
+
+// ── recycle ──────────────────────────────────────────────────
+program
+  .command('recycle')
+  .description('Show fiat recycling loop status')
+  .action(async () => {
+    await withDb(() => {
+      const config = loadConfig(program.opts<{ config?: string }>().config);
+      const recycleManager = new RecycleManager(config);
+      const openRecycles = recycleManager.getOpenRecycles();
+
+      if (openRecycles.length === 0) {
+        console.log('\nNo open recycling loops.\n');
+        return;
+      }
+
+      console.log(`\n=== Fiat Recycling Status (${openRecycles.length} open) ===\n`);
+
+      const stateLabels: Record<string, string> = {
+        fiat_received: 'Fiat Received',
+        sepa_sent: 'SEPA Sent',
+        cex_received: 'CEX Received',
+        usdc_bought: 'USDC Bought',
+        bridged: 'Bridged to Base',
+        deposited: 'Re-Deposited',
+      };
+
+      for (const r of openRecycles) {
+        const progress = RECYCLE_STATES.indexOf(r.currentState) + 1;
+        const bar = RECYCLE_STATES.map((_s, i) =>
+          i < progress ? '[X]' : '[ ]'
+        ).join(' ');
+
+        console.log(`  Cycle #${r.cycleId} | Deposit #${r.depositId}`);
+        console.log(`  USDC sold: ${formatUSD(r.usdcSold)} | Fiat: ${r.fiatReceived != null ? formatEUR(r.fiatReceived) : 'pending'}`);
+        console.log(`  State: ${stateLabels[r.currentState] ?? r.currentState}`);
+        console.log(`  ${bar}`);
+        console.log(`  Next: ${r.nextState ? stateLabels[r.nextState] ?? r.nextState : 'DONE'}`);
+        console.log(`  Started: ${r.startedAt}`);
+        console.log('');
+      }
+    });
+  });
+
+// ── recycle advance ─────────────────────────────────────────
+program
+  .command('recycle-advance <cycleId>')
+  .description('Advance a recycling loop to the next step')
+  .action(async (cycleIdStr) => {
+    await withDb(() => {
+      const config = loadConfig(program.opts<{ config?: string }>().config);
+      const recycleManager = new RecycleManager(config);
+
+      const cycleId = parseInt(cycleIdStr, 10);
+      if (isNaN(cycleId)) {
+        console.error('Error: cycleId must be a number');
+        return;
+      }
+
+      const result = recycleManager.advanceState(cycleId);
+      console.log(`\n${result.message}\n`);
+    });
+  });
+
+// ── revolut ─────────────────────────────────────────────────
+program
+  .command('revolut')
+  .description('Show recent Revolut transactions')
+  .option('-n, --limit <number>', 'Number of transactions', '20')
+  .action(async (opts) => {
+    await withDb(() => {
+      const config = loadConfig(program.opts<{ config?: string }>().config);
+      const recycleManager = new RecycleManager(config);
+      const matcher = new RevolutMatcher(recycleManager);
+      const txs = matcher.getRecentTransactions(parseInt(opts.limit, 10));
+
+      if (txs.length === 0) {
+        console.log('\nNo Revolut transactions recorded yet.\n');
+        return;
+      }
+
+      console.log('\n=== Recent Revolut Transactions ===\n');
+      console.log(
+        'TX ID'.padEnd(14) +
+        'Amount'.padEnd(12) +
+        'Cur'.padEnd(5) +
+        'Counterparty'.padEnd(22) +
+        'Matched'.padEnd(10) +
+        'Date',
+      );
+      console.log('-'.repeat(80));
+
+      for (const tx of txs) {
+        const txId = (tx.revolut_tx_id as string)?.slice(0, 12) ?? 'N/A';
+        const amount = tx.amount != null ? formatEUR(tx.amount as number) : 'N/A';
+        const cur = (tx.currency as string) ?? '?';
+        const counterparty = ((tx.counterparty as string) ?? '').slice(0, 20);
+        const matched = tx.matched_order_id != null ? `Order #${tx.matched_order_id}` : '-';
+        const date = tx.received_at
+          ? new Date(tx.received_at as string).toLocaleDateString('de-DE')
+          : '-';
+
+        console.log(
+          txId.padEnd(14) +
+          amount.padEnd(12) +
+          cur.padEnd(5) +
+          counterparty.padEnd(22) +
+          matched.padEnd(10) +
+          date,
+        );
+      }
+      console.log('');
     });
   });
 

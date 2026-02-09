@@ -1,6 +1,8 @@
 import type { AppConfig } from '../config/schema.js';
 import type { OrderManager } from '../engine/order-manager.js';
 import type { SpreadEngine, SpreadRecommendation } from '../engine/spread-engine.js';
+import type { RecycleManager } from '../engine/recycle-manager.js';
+import type { RevolutClient } from '../revolut/client.js';
 import { sendConsoleAlert, type AlertMessage } from './console.js';
 import { initTelegram, sendTelegramAlert } from './telegram.js';
 import { initDiscord, sendDiscordAlert } from './discord.js';
@@ -87,6 +89,54 @@ export function connectSpreadEngine(spreadEngine: SpreadEngine): void {
   });
 
   log.info('Alert service connected to spread engine');
+}
+
+export function connectRecycleManager(recycleManager: RecycleManager): void {
+  recycleManager.on('stateAdvanced', (event) => {
+    sendAlert({
+      severity: 'info',
+      title: 'Recycle Loop Advanced',
+      body: `Cycle #${event.cycleId}: ${event.from} → ${event.to}`,
+    });
+  });
+
+  recycleManager.on('recycleComplete', (event) => {
+    sendAlert({
+      severity: 'info',
+      title: 'Recycle Complete',
+      body: `Cycle #${event.cycleId} (Deposit #${event.depositId}) is fully recycled`,
+    });
+  });
+
+  recycleManager.on('reminderDue', (event) => {
+    sendAlert({
+      severity: 'warn',
+      title: 'Recycle Reminder',
+      body: `Cycle #${event.cycleId} stuck at "${event.state}" for ${event.hours}h — action needed`,
+    });
+  });
+
+  log.info('Alert service connected to recycle manager');
+}
+
+export function connectRevolutClient(revolutClient: RevolutClient): void {
+  // Check token health on startup
+  const health = revolutClient.checkTokenHealth();
+  if (!health.healthy) {
+    sendAlert({
+      severity: 'error',
+      title: 'Revolut Token Warning',
+      body: health.message ?? 'Token may be expiring soon',
+    });
+  } else if (health.daysUntilExpiry != null && health.daysUntilExpiry <= 14) {
+    sendAlert({
+      severity: 'warn',
+      title: 'Revolut Token Reminder',
+      body: `Token expires in ~${health.daysUntilExpiry} days — plan refresh`,
+    });
+  }
+
+  log.info('Alert service connected to Revolut client');
 }
 
 export async function sendAlert(msg: AlertMessage): Promise<void> {

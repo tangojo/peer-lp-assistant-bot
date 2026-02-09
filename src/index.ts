@@ -6,14 +6,24 @@ import { OrderManager } from './engine/order-manager.js';
 import { ForexPoller } from './forex/poller.js';
 import { SpreadEngine } from './engine/spread-engine.js';
 import { PnlTracker } from './engine/pnl-tracker.js';
-import { initAlertService, connectOrderManager, connectSpreadEngine } from './alerts/service.js';
+import { RecycleManager } from './engine/recycle-manager.js';
+import { RevolutClient } from './revolut/client.js';
+import { RevolutWebhookServer } from './revolut/webhook.js';
+import { RevolutMatcher } from './revolut/matcher.js';
+import {
+  initAlertService,
+  connectOrderManager,
+  connectSpreadEngine,
+  connectRecycleManager,
+  connectRevolutClient,
+} from './alerts/service.js';
 import { startApiServer } from './api/server.js';
 import { createChildLogger } from './utils/logger.js';
 
 const log = createChildLogger('main');
 
 async function main(): Promise<void> {
-  log.info('Peer LP Assistant Bot v0.2.0 starting...');
+  log.info('Peer LP Assistant Bot v0.3.0 starting...');
 
   // 1. Load config
   const config = loadConfig();
@@ -26,7 +36,7 @@ async function main(): Promise<void> {
   initAlertService(config);
 
   // 4. Start forex poller
-  const forexPoller = new ForexPoller(5 * 60 * 1000); // 5 min
+  const forexPoller = new ForexPoller(5 * 60 * 1000);
   await forexPoller.start();
 
   // 5. Start spread engine
@@ -37,34 +47,59 @@ async function main(): Promise<void> {
   const pnlTracker = new PnlTracker(forexPoller);
   pnlTracker.start();
 
-  // 7. Start chain listener
+  // 7. Start recycle manager
+  const recycleManager = new RecycleManager(config);
+  recycleManager.start();
+
+  // 8. Initialize Revolut integration
+  const revolutClient = new RevolutClient(config);
+  let revolutWebhook: RevolutWebhookServer | null = null;
+  let revolutMatcher: RevolutMatcher | null = null;
+
+  if (config.revolut.enabled) {
+    revolutMatcher = new RevolutMatcher(recycleManager);
+
+    // Start webhook server
+    revolutWebhook = new RevolutWebhookServer(config.revolut.webhook_port);
+    await revolutWebhook.start();
+
+    // Wire webhook events → matcher
+    revolutWebhook.on('transactionCreated', (tx) => {
+      revolutMatcher!.matchTransaction(tx);
+    });
+
+    // Connect Revolut token health alerts
+    connectRevolutClient(revolutClient);
+  }
+
+  // 9. Start chain listener
   const chainListener = new ChainListener(config);
 
-  // 8. Start order manager
+  // 10. Start order manager
   const orderManager = new OrderManager(chainListener);
   orderManager.start();
 
-  // 9. Auto-open P&L cycles on fulfilled orders
+  // 11. Auto-open P&L cycles on fulfilled orders
   orderManager.on('orderFulfilled', (event) => {
-    const deposits = config.peer.deposit_ids;
-    if (deposits.includes(event.depositId)) {
+    if (config.peer.deposit_ids.includes(event.depositId)) {
       pnlTracker.openCycle(event.depositId, event.usdcAmount, config.spread.target_margin_percent);
     }
   });
 
-  // 10. Connect alerts
+  // 12. Connect all alerts
   connectOrderManager(orderManager);
   connectSpreadEngine(spreadEngine);
+  connectRecycleManager(recycleManager);
 
-  // 11. Start listening to chain events
+  // 13. Start listening to chain events
   await chainListener.start();
 
-  // 12. Start REST API (if enabled)
+  // 14. Start REST API (if enabled)
   if (config.api.enabled) {
     await startApiServer({ config, orderManager, pnlTracker, spreadEngine, forexPoller });
   }
 
-  // 13. Periodic database save (every 60 seconds)
+  // 15. Periodic database save (every 60 seconds)
   const saveInterval = setInterval(() => {
     saveDatabase();
   }, 60_000);
@@ -76,6 +111,8 @@ async function main(): Promise<void> {
     log.info('Shutting down...');
     clearInterval(saveInterval);
     forexPoller.stop();
+    recycleManager.stop();
+    if (revolutWebhook) await revolutWebhook.stop();
     await chainListener.stop();
     closeDatabase();
     log.info('Shutdown complete');
