@@ -1,0 +1,42 @@
+# Peer LP Assistant Bot — Configuration
+version: 1
+
+# Wallet & Chain
+wallet:
+  address: "0x0000000000000000000000000000000000000000"  # TODO: Set your wallet address
+
+chain:
+  rpc_url: "https://mainnet.base.org"
+  # rpc_ws: "wss://base-mainnet.g.alchemy.com/v2/YOUR_KEY"
+  chain_id: 8453
+
+# Peer Protocol
+peer:
+  escrow_address: "0x2f121CDDCA6d652f35e8B3E560f9760898888888"
+  orchestrator_address: "0x88888883Ed048FF0a415271B28b2F52d431810D0"
+  deposit_ids: [1]  # TODO: Set your deposit ID(s)
+  payment_method: "revolut"
+  currency: "EUR"
+
+# Spread Strategy
+spread:
+  mode: "manual"
+  target_margin_percent: 1.0
+  recycling_cost_percent: 0.4
+  gas_buffer_percent: 0.1
+  min_spread_percent: 0.5
+  max_spread_percent: 3.0
+
+# Alerting
+alerts:
+  telegram:
+    enabled: false
+  discord:
+    enabled: false
+  console:
+    enabled: true
+    log_level: "info"
+
+# Database
+database:
+  path: "./data/peer-lp.db"
