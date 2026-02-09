@@ -4,8 +4,11 @@ import { Command } from 'commander';
 import { loadConfig } from '../config/loader.js';
 import { initDatabase, closeDatabase } from '../db/connection.js';
 import { runMigrations } from '../db/migrations.js';
-import { getDeposits, getOrders, getOrderStats } from '../db/queries.js';
-import { formatUSD, formatPercent, formatDuration, shortenHash } from '../utils/formatting.js';
+import { getDeposits, getOrders, getOrderStats, getLatestForex } from '../db/queries.js';
+import { formatUSD, formatEUR, formatPercent, formatDuration, shortenHash } from '../utils/formatting.js';
+import { ForexPoller } from '../forex/poller.js';
+import { SpreadEngine } from '../engine/spread-engine.js';
+import { PnlTracker } from '../engine/pnl-tracker.js';
 
 const program = new Command();
 
@@ -108,6 +111,100 @@ program
         );
       }
       console.log('');
+    });
+  });
+
+// ── pnl ─────────────────────────────────────────────────────
+program
+  .command('pnl')
+  .description('Show P&L summary')
+  .option('-p, --period <days>', 'Period in days (e.g. 7, 30, 90)')
+  .action(async (opts) => {
+    await withDb(() => {
+      const forexPoller = new ForexPoller();
+      const pnlTracker = new PnlTracker(forexPoller);
+
+      const periodDays = opts.period ? parseInt(opts.period, 10) : null;
+      const summary = pnlTracker.getSummary(periodDays);
+
+      console.log(`\n=== P&L Summary (${summary.period}) ===\n`);
+      console.log(`  Total cycles:       ${summary.totalCycles}`);
+      console.log(`  Completed cycles:   ${summary.completedCycles}`);
+      console.log(`  USDC sold:          ${formatUSD(summary.totalUsdcSold)}`);
+      console.log(`  Fiat received:      ${formatEUR(summary.totalFiatReceived)}`);
+      console.log(`  Net profit (EUR):   ${formatEUR(summary.totalNetProfitFiat)}`);
+      console.log(`  Net profit (USD):   ${formatUSD(summary.totalNetProfitUsd)}`);
+      console.log(`  Avg spread:         ${summary.avgSpreadPercent != null ? formatPercent(summary.avgSpreadPercent) : 'N/A'}`);
+      console.log(`  Avg fill time:      ${summary.avgFillTimeSeconds != null ? formatDuration(summary.avgFillTimeSeconds) : 'N/A'}`);
+      console.log(`  Annualized return:  ${summary.annualizedReturnPercent != null ? formatPercent(summary.annualizedReturnPercent) : 'N/A'}`);
+
+      const openCycles = pnlTracker.getOpenCycles();
+      if (openCycles.length > 0) {
+        console.log(`\n--- Open Cycles (${openCycles.length}) ---\n`);
+        for (const c of openCycles) {
+          console.log(`  Cycle #${c.id} | Deposit #${c.deposit_id} | ${formatUSD(c.usdc_sold)} USDC | ${c.status} | ${c.started_at}`);
+        }
+      }
+      console.log('');
+    });
+  });
+
+// ── spread ──────────────────────────────────────────────────
+program
+  .command('spread')
+  .description('Show current spread and recommendation')
+  .action(async () => {
+    await withDb(() => {
+      const config = loadConfig(program.opts<{ config?: string }>().config);
+      const forexPoller = new ForexPoller();
+      const spreadEngine = new SpreadEngine(config, forexPoller);
+
+      // Load latest forex from DB
+      const latest = getLatestForex();
+
+      const rec = spreadEngine.getRecommendation();
+      const health = spreadEngine.isSpreadHealthy();
+
+      console.log('\n=== Spread Info ===\n');
+      console.log(`  EUR/USD rate:     ${latest ? latest.eur_usd.toFixed(4) : 'N/A'} (${latest?.source ?? 'no data'})`);
+      console.log(`  Current spread:   ${rec.current != null ? formatPercent(rec.current) : 'N/A'}`);
+      console.log(`  Recommended:      ${formatPercent(rec.recommended)}`);
+      console.log(`  Breakdown:        ${rec.breakdown}`);
+      console.log(`  Health:           ${health.healthy ? 'OK' : health.reason}`);
+      console.log(`  Mode:             ${config.spread.mode}`);
+      console.log(`  Min/Max:          ${formatPercent(config.spread.min_spread_percent)} / ${formatPercent(config.spread.max_spread_percent)}`);
+      console.log('');
+    });
+  });
+
+// ── spread set ──────────────────────────────────────────────
+program
+  .command('spread-set <percent>')
+  .description('Set spread for a deposit (local only, Phase 4 for on-chain)')
+  .option('-d, --deposit <id>', 'Deposit ID', '1')
+  .action(async (percent, opts) => {
+    await withDb(() => {
+      const config = loadConfig(program.opts<{ config?: string }>().config);
+      const forexPoller = new ForexPoller();
+      const spreadEngine = new SpreadEngine(config, forexPoller);
+
+      const spreadPercent = parseFloat(percent);
+      const depositId = parseInt(opts.deposit, 10);
+
+      if (isNaN(spreadPercent)) {
+        console.error('Error: spread must be a number (e.g. 1.5)');
+        return;
+      }
+
+      const { min_spread_percent, max_spread_percent } = config.spread;
+      if (spreadPercent < min_spread_percent || spreadPercent > max_spread_percent) {
+        console.error(`Error: spread must be between ${min_spread_percent}% and ${max_spread_percent}%`);
+        return;
+      }
+
+      spreadEngine.setCurrentSpread(depositId, spreadPercent);
+      console.log(`\nSpread for deposit #${depositId} set to ${formatPercent(spreadPercent)}`);
+      console.log('Note: On-chain transaction not yet implemented (Phase 4)\n');
     });
   });
 

@@ -20,10 +20,12 @@
     "peer-lp": "./dist/cli/index.js"
   },
   "dependencies": {
+    "@fastify/bearer-auth": "^10.1.2",
     "@zkp2p/contracts-v2": "^0.0.9",
     "commander": "^13.1.0",
     "cosmiconfig": "^9.0.0",
     "ethers": "^6.14.0",
+    "fastify": "^5.7.4",
     "grammy": "^1.35.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",

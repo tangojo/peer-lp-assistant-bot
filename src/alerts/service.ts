@@ -1,8 +1,10 @@
 import type { AppConfig } from '../config/schema.js';
 import type { OrderManager } from '../engine/order-manager.js';
+import type { SpreadEngine, SpreadRecommendation } from '../engine/spread-engine.js';
 import { sendConsoleAlert, type AlertMessage } from './console.js';
 import { initTelegram, sendTelegramAlert } from './telegram.js';
-import { formatUSD, shortenAddress, shortenHash, formatDuration } from '../utils/formatting.js';
+import { initDiscord, sendDiscordAlert } from './discord.js';
+import { formatUSD, formatPercent, shortenAddress, shortenHash, formatDuration } from '../utils/formatting.js';
 import { createChildLogger } from '../utils/logger.js';
 
 const log = createChildLogger('alert-service');
@@ -21,6 +23,16 @@ export function initAlertService(cfg: AppConfig): void {
       initTelegram(token, chat);
     } else {
       log.warn('Telegram enabled but TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set');
+    }
+  }
+
+  // Initialize Discord if configured
+  if (cfg.alerts.discord.enabled) {
+    const url = process.env[cfg.alerts.discord.webhook_url_env];
+    if (url) {
+      initDiscord(url);
+    } else {
+      log.warn('Discord enabled but DISCORD_WEBHOOK_URL not set');
     }
   }
 }
@@ -65,7 +77,19 @@ export function connectOrderManager(orderManager: OrderManager): void {
   log.info('Alert service connected to order manager');
 }
 
-async function sendAlert(msg: AlertMessage): Promise<void> {
+export function connectSpreadEngine(spreadEngine: SpreadEngine): void {
+  spreadEngine.on('recommendationChanged', (rec: SpreadRecommendation) => {
+    sendAlert({
+      severity: 'info',
+      title: 'Spread Recommendation Changed',
+      body: `Recommended: ${formatPercent(rec.recommended)}\n${rec.breakdown}`,
+    });
+  });
+
+  log.info('Alert service connected to spread engine');
+}
+
+export async function sendAlert(msg: AlertMessage): Promise<void> {
   // Always log to console
   if (config.alerts.console.enabled) {
     sendConsoleAlert(msg);
@@ -74,5 +98,10 @@ async function sendAlert(msg: AlertMessage): Promise<void> {
   // Send to Telegram
   if (config.alerts.telegram.enabled) {
     await sendTelegramAlert(msg);
+  }
+
+  // Send to Discord
+  if (config.alerts.discord.enabled) {
+    await sendDiscordAlert(msg);
   }
 }

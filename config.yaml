@@ -37,6 +37,11 @@ alerts:
     enabled: true
     log_level: "info"
 
+# REST API
+api:
+  enabled: true
+  port: 3200
+
 # Database
 database:
   path: "./data/peer-lp.db"
