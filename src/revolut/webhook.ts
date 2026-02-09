@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createChildLogger } from '../utils/logger.js';
 import { EventEmitter } from 'node:events';
 
@@ -40,6 +40,9 @@ export class RevolutWebhookServer extends EventEmitter<WebhookEvents> {
     super();
     this.port = port;
     this.signingSecret = process.env.REVOLUT_WEBHOOK_SECRET ?? null;
+    if (!this.signingSecret) {
+      log.warn('REVOLUT_WEBHOOK_SECRET not set — webhook signature validation disabled');
+    }
   }
 
   async start(): Promise<void> {
@@ -122,6 +125,9 @@ export class RevolutWebhookServer extends EventEmitter<WebhookEvents> {
       .update(typeof body === 'string' ? body : JSON.stringify(body))
       .digest('hex');
 
-    return expected === signature;
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length) return false;
+    return timingSafeEqual(sigBuf, expBuf);
   }
 }

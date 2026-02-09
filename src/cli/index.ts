@@ -21,12 +21,13 @@ program
   .name('peer-lp')
   .description('Peer LP Assistant Bot — CLI')
   .version('0.1.0')
-  .option('-c, --config <path>', 'Path to config file');
+  .option('-c, --config <path>', 'Path to config file')
+  .option('-p, --profile <name>', 'Profile name (for multi-user configs)');
 
 // Initialize database for commands that need it
 async function withDb<T>(fn: () => T | Promise<T>): Promise<T> {
-  const opts = program.opts<{ config?: string }>();
-  const config = loadConfig(opts.config);
+  const opts = program.opts<{ config?: string; profile?: string }>();
+  const config = loadConfig(opts.config, opts.profile);
   const db = await initDatabase(config.database.path);
   runMigrations(db);
   try {

@@ -7,30 +7,21 @@ Ein Bot zur Automatisierung, Optimierung und Überwachung von Liquidity-Provider
 Als Peer LP musst du normalerweise manuell:
 - On-Chain-Events beobachten (neue Orders, Fills)
 - Fiat-Eingänge auf Revolut prüfen
-- EUR/USD-Kurse im Auge behalten
-- Spreads anpassen
+- EUR/USD-Kurse im Auge behalten und Spreads anpassen
+- Fiat zurück in USDC konvertieren (Recycling Loop)
 - P&L in einer Tabelle tracken
 
-**Dieser Bot automatisiert das alles.** Er überwacht die Blockchain in Echtzeit, trackt alle Orders, berechnet P&L und sendet Alerts via Telegram.
+**Dieser Bot automatisiert das alles.**
 
-## Features (Phase 1 — Foundation)
-
-- **On-Chain-Monitoring:** Lauscht auf Base-Events (IntentSignaled, FundsLocked, FundsUnlockedAndTransferred)
-- **Order Tracking:** State Machine pro Intent (signaled → locked → fulfilled/expired)
-- **Telegram Alerts:** Benachrichtigungen bei neuen Orders, Fills, Fehlern
-- **Console Logging:** Strukturiertes JSON-Logging via pino
-- **CLI:** `peer-lp status` und `peer-lp orders` für Quick-Checks
-- **SQLite Persistenz:** Alle Daten lokal gespeichert, kein externer DB-Server nötig
-- **PM2 Ready:** Auto-Restart, Log-Rotation, Memory-Limits
-
-## Geplante Features
+## Features
 
 | Phase | Feature | Status |
 |-------|---------|--------|
-| 2 | Forex Poller, Spread Engine, P&L Tracker, REST API, Discord | Geplant |
-| 3 | Revolut API Integration, Fiat-Loop Tracking | Geplant |
-| 4 | Auto-Spread, Escrow Management, Konkurrenz-Analyse | Geplant |
-| 5 | Multi-User, Docker, Open Source | Geplant |
+| 1 Foundation | On-Chain-Monitoring, Order Tracking, Telegram/Console Alerts, CLI, SQLite | Done |
+| 2 Intelligence | Forex Poller (ECB), Spread Engine, P&L Tracker, REST API, Discord Alerts | Done |
+| 3 Integration | Revolut API/Webhook, Fiat-TX Matching, Recycling State Machine | Done |
+| 4 Automation | Auto-Spread (On-Chain TX), Escrow Management, Konkurrenz-Analyse | Done |
+| 5 Polish | Multi-User Profiles, Docker, Unit Tests (75%+), Security Review, MIT License | Done |
 
 ---
 
@@ -38,280 +29,236 @@ Als Peer LP musst du normalerweise manuell:
 
 - **Node.js** >= 20.0.0
 - **npm** >= 9
-- **USDC auf Base** (Startkapital, z.B. $1.000–$2.000)
+- **USDC auf Base** (Startkapital, z.B. $1.000-$2.000)
 - **Peer Deposit** (mindestens einen aktiven Deposit auf [peer.xyz](https://peer.xyz))
-- **Telegram Bot** (optional, für Alerts)
+- **Telegram Bot** (optional, fur Alerts)
 
-## Installation
-
-### 1. Repository klonen
+## Schnellstart
 
 ```bash
 git clone git@github.com:tangojo/peer-lp-assistant-bot.git
 cd peer-lp-assistant-bot
-```
-
-### 2. Dependencies installieren
-
-```bash
 npm install
-```
-
-### 3. Konfiguration erstellen
-
-Kopiere und bearbeite die Config-Datei:
-
-```bash
-cp config.yaml config.local.yaml
-```
-
-Bearbeite `config.yaml` mit deinen Daten:
-
-```yaml
-wallet:
-  address: "0xDEINE_WALLET_ADRESSE"
-
-peer:
-  deposit_ids: [42]  # Deine Deposit-ID(s) von peer.xyz
-```
-
-### 4. Environment-Variablen setzen
-
-```bash
-cp .env.example .env
-```
-
-Für Telegram-Alerts (optional):
-
-```bash
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF...   # Von @BotFather
-TELEGRAM_CHAT_ID=-100123456789          # Deine Chat-ID
-```
-
-### 5. TypeScript kompilieren
-
-```bash
 npm run build
+cp .env.example .env   # Secrets eintragen
 ```
 
-### 6. Bot starten
-
-**Entwicklung (mit Auto-Reload):**
-```bash
-npm run dev
-```
-
-**Produktion (direkt):**
-```bash
-npm start
-```
-
-**Produktion (mit PM2):**
-```bash
-pm2 start ecosystem.config.cjs
-pm2 save
-```
-
----
-
-## Konfiguration
-
-Die Konfiguration erfolgt über `config.yaml`. Alle Felder mit Defaults sind optional.
-
-### Minimal-Config
+Bearbeite `config.yaml`:
 
 ```yaml
-version: 1
-
 wallet:
   address: "0xDEINE_WALLET_ADRESSE"
 
 peer:
   deposit_ids: [42]
+```
 
+Starten:
+
+```bash
+npm start           # Produktion
+npm run dev         # Entwicklung (Auto-Reload)
+pm2 start ecosystem.config.cjs  # PM2
+```
+
+---
+
+## Docker
+
+```bash
+# Build & Start
+docker compose up -d
+
+# Logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+Die `docker-compose.yml` mountet `config.yaml` (read-only), `data/` (persistent) und `.env`.
+
+---
+
+## Multi-User Profiles
+
+Der Bot unterstutzt mehrere Wallets/Deposits in einer Config:
+
+```yaml
+# Multi-User Config
+profiles:
+  - name: "main"
+    wallet:
+      address: "0xWALLET_1"
+    peer:
+      deposit_ids: [1, 2]
+    spread:
+      target_margin_percent: 1.0
+    private_key_env: "WALLET_1_PRIVATE_KEY"
+
+  - name: "secondary"
+    wallet:
+      address: "0xWALLET_2"
+    peer:
+      deposit_ids: [3]
+    spread:
+      target_margin_percent: 1.5
+    private_key_env: "WALLET_2_PRIVATE_KEY"
+
+# Shared settings
+chain:
+  rpc_url: "https://mainnet.base.org"
 alerts:
   telegram:
     enabled: true
 ```
 
-### Vollständige Config-Referenz
+Profil auswahlen:
+
+```bash
+# CLI
+node dist/cli/index.js --profile secondary status
+
+# Bot (via Environment)
+PEER_LP_PROFILE=secondary npm start
+```
+
+Ohne `profiles`-Array funktioniert die Single-User-Config wie bisher (ruckwartskompatibel).
+
+---
+
+## Konfiguration
+
+### Vollstandige Config-Referenz
 
 | Feld | Typ | Default | Beschreibung |
 |------|-----|---------|-------------|
-| `wallet.address` | string | — | **Pflicht.** Deine EVM-Wallet-Adresse |
+| `wallet.address` | string | -- | **Pflicht.** EVM-Wallet-Adresse |
 | `chain.rpc_url` | string | `https://mainnet.base.org` | Base RPC URL |
-| `chain.rpc_ws` | string | — | WebSocket RPC (für Echtzeit-Events) |
-| `chain.chain_id` | number | `8453` | Base Chain ID |
-| `peer.escrow_address` | string | `0x2f121...888888` | Peer Escrow Contract |
-| `peer.orchestrator_address` | string | `0x8888...10D0` | Peer Orchestrator Contract |
-| `peer.deposit_ids` | number[] | — | **Pflicht.** Deine Deposit-IDs |
+| `chain.rpc_ws` | string | -- | WebSocket RPC (Echtzeit-Events) |
+| `peer.deposit_ids` | number[] | -- | **Pflicht.** Deine Deposit-IDs |
 | `peer.payment_method` | string | `revolut` | Zahlungsmethode |
-| `peer.currency` | string | `EUR` | Fiat-Währung |
+| `peer.currency` | string | `EUR` | Fiat-Wahrung |
 | `spread.mode` | string | `manual` | `manual` oder `auto` |
 | `spread.target_margin_percent` | number | `1.0` | Ziel-Marge in % |
 | `spread.recycling_cost_percent` | number | `0.4` | Fiat-Recycling-Kosten in % |
-| `alerts.telegram.enabled` | boolean | `false` | Telegram-Alerts aktivieren |
-| `alerts.console.enabled` | boolean | `true` | Console-Logging aktivieren |
-| `alerts.console.log_level` | string | `info` | Log-Level: debug/info/warn/error |
-| `database.path` | string | `./data/peer-lp.db` | SQLite-Datenbankpfad |
+| `spread.gas_buffer_percent` | number | `0.1` | Gas-Buffer in % |
+| `spread.min_spread_percent` | number | `0.5` | Minimum Spread |
+| `spread.max_spread_percent` | number | `3.0` | Maximum Spread |
+| `spread.auto_adjust_interval_minutes` | number | `30` | Auto-Adjust Intervall (min 5) |
+| `revolut.enabled` | boolean | `false` | Revolut-Integration aktivieren |
+| `revolut.webhook_port` | number | `3100` | Webhook Listening Port |
+| `recycling.cex` | string | `kraken` | CEX fur Recycling (kraken/coinbase) |
+| `recycling.cex_fee_percent` | number | `0.26` | CEX Trading-Gebuhren |
+| `alerts.telegram.enabled` | boolean | `false` | Telegram-Alerts |
+| `alerts.discord.enabled` | boolean | `false` | Discord-Alerts |
+| `alerts.console.enabled` | boolean | `true` | Console-Logging |
+| `api.enabled` | boolean | `false` | REST API aktivieren |
+| `api.port` | number | `3200` | API Port |
 
 ### Environment-Variablen
 
 | Variable | Beschreibung |
 |----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token (von @BotFather) |
-| `TELEGRAM_CHAT_ID` | Telegram Chat ID für Alerts |
-| `DISCORD_WEBHOOK_URL` | Discord Webhook URL (Phase 2) |
-| `PEER_LP_PRIVATE_KEY` | Wallet Private Key (nur für Auto-Spread, Phase 4) |
-| `REVOLUT_ACCESS_TOKEN` | Revolut Business API Token (Phase 3) |
-| `PEER_LP_API_KEY` | API Key für REST-Endpoints (Phase 2) |
-| `BASE_RPC_URL` | Überschreibt `chain.rpc_url` |
-| `LOG_LEVEL` | Überschreibt Log-Level global |
+| `PEER_LP_PRIVATE_KEY` | Wallet Private Key (fur Auto-Spread + Escrow) |
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token |
+| `TELEGRAM_CHAT_ID` | Telegram Chat ID |
+| `DISCORD_WEBHOOK_URL` | Discord Webhook URL |
+| `REVOLUT_ACCESS_TOKEN` | Revolut Business API Token |
+| `REVOLUT_WEBHOOK_SECRET` | Revolut Webhook Signing Secret |
+| `REVOLUT_TOKEN_REFRESH_DATE` | Datum des letzten Token-Refreshes |
+| `PEER_LP_API_KEY` | API Key fur REST-Endpoints |
+| `PEER_LP_PROFILE` | Profil-Name fur Multi-User |
 
 ---
 
-## CLI Bedienung
-
-### Status anzeigen
+## CLI
 
 ```bash
-npx tsx src/cli/index.ts status
+# Basis
+peer-lp status                    # Deposit-Status + Balances
+peer-lp orders [--limit 50]       # Letzte Orders
+peer-lp pnl [--period 7d]         # P&L Summary
 
-# oder nach Build:
-node dist/cli/index.js status
-```
+# Spread
+peer-lp spread                    # Aktuelle Empfehlung
+peer-lp spread-set 1.5            # Spread lokal setzen
 
-Zeigt:
-- Alle Deposits mit Status, verfügbarem Betrag, Spread
-- Order-Statistiken (Total, Fulfilled, Fill-Rate, Avg Fill Time)
+# Fiat Recycling
+peer-lp recycle                   # Recycling-Loop Status
+peer-lp recycle-advance <cycleId> # Nachsten Schritt auslosen
+peer-lp revolut [--hours 48]      # Revolut-Transaktionen
 
-### Orders anzeigen
+# Escrow Management (braucht PEER_LP_PRIVATE_KEY)
+peer-lp deposit-sync              # On-Chain Deposit-Daten synchronisieren
+peer-lp deposit-add <id> <amount> # USDC zu Deposit hinzufugen
+peer-lp deposit-withdraw <id> <amount>  # USDC abziehen
+peer-lp deposit-pause <id>        # Deposit pausieren
+peer-lp deposit-resume <id>       # Deposit fortsetzen
+peer-lp competition               # Konkurrenz-Deposits analysieren
 
-```bash
-npx tsx src/cli/index.ts orders
-npx tsx src/cli/index.ts orders --limit 50
-```
-
-Zeigt die letzten N Orders mit Hash, Deposit-ID, USDC-Betrag, Status und Fill-Time.
-
-### Hilfe
-
-```bash
-npx tsx src/cli/index.ts --help
-npx tsx src/cli/index.ts status --help
+# Optionen
+peer-lp --profile secondary status  # Profil auswahlen
+peer-lp --config ./other.yaml status  # Config-Pfad
 ```
 
 ---
 
-## Telegram Bot einrichten
+## REST API
 
-1. **Bot erstellen:** Schreibe `/newbot` an [@BotFather](https://t.me/BotFather) auf Telegram
-2. **Token kopieren:** BotFather gibt dir einen Token wie `123456:ABC-DEF...`
-3. **Chat-ID ermitteln:**
-   - Schreibe deinem Bot eine Nachricht
-   - Öffne `https://api.telegram.org/bot<TOKEN>/getUpdates`
-   - Finde `"chat":{"id":<DEINE_CHAT_ID>}`
-4. **In `.env` eintragen:**
-   ```
-   TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
-   TELEGRAM_CHAT_ID=123456789
-   ```
-5. **In `config.yaml` aktivieren:**
-   ```yaml
-   alerts:
-     telegram:
-       enabled: true
-   ```
+Wenn `api.enabled: true` in der Config:
 
-### Alert-Typen
+| Endpoint | Method | Beschreibung |
+|----------|--------|-------------|
+| `/api/status` | GET | Deposits, Order-Stats, Spread, Forex |
+| `/api/pnl?period=7d` | GET | P&L Summary + Zyklen |
+| `/api/orders?limit=20` | GET | Letzte Orders |
+| `/api/spread` | GET | Aktuelle Spread-Empfehlung |
+| `/api/spread` | POST | Spread manuell setzen |
+| `/api/forex` | GET | EUR/USD Kurs |
 
-| Event | Severity | Beispiel |
-|-------|----------|---------|
-| Neue Order | INFO | "New Order — Deposit #42 \| $500.00 USDC" |
-| Funds Locked | INFO | "Funds Locked — Deposit #42" |
-| Order Fulfilled | INFO | "Order Fulfilled — $500.00 USDC, Fill time: 3m 42s" |
-| Order Expired | WARN | "Order Expired — Deposit #42" |
-
----
-
-## PM2 Deployment
-
-### Ersteinrichtung
-
-```bash
-npm run build
-pm2 start ecosystem.config.cjs
-pm2 save
-pm2 startup  # Auto-Start nach Reboot
-```
-
-### Nützliche PM2-Befehle
-
-```bash
-pm2 status                  # Alle Prozesse anzeigen
-pm2 logs peer-lp-bot        # Live-Logs
-pm2 logs peer-lp-bot --lines 100  # Letzte 100 Zeilen
-pm2 restart peer-lp-bot     # Neustart
-pm2 stop peer-lp-bot        # Stoppen
-pm2 monit                   # Monitoring-Dashboard
-```
-
-### PM2 Konfiguration
-
-Die Datei `ecosystem.config.cjs` enthält:
-- **Auto-Restart:** Bei Crash, max 10 Neustarts
-- **Memory Limit:** Restart bei >200MB
-- **Log-Dateien:** `data/logs/out.log` und `data/logs/error.log`
-- **Restart-Delay:** 5 Sekunden zwischen Neustarts
+Wenn `PEER_LP_API_KEY` gesetzt, wird Bearer-Auth erzwungen.
 
 ---
 
 ## Architektur
 
-Siehe [ARCHITECTURE.md](ARCHITECTURE.md) für die vollständige Architektur-Dokumentation.
-
-### Projektstruktur
+Siehe [ARCHITECTURE.md](ARCHITECTURE.md) fur die vollstandige Dokumentation.
 
 ```
 peer-lp-bot/
 ├── src/
-│   ├── index.ts               # Entry Point — startet alle Services
-│   ├── config/
-│   │   ├── schema.ts          # Zod-Schema für Config-Validierung
-│   │   └── loader.ts          # Config laden + Env-Variablen
-│   ├── chain/
-│   │   ├── listener.ts        # Base Event Listener (WS + Polling)
-│   │   ├── escrow.ts          # Escrow-Contract ABI
-│   │   └── orchestrator.ts    # Orchestrator-Contract ABI
-│   ├── engine/
-│   │   └── order-manager.ts   # Order State Machine
-│   ├── alerts/
-│   │   ├── telegram.ts        # Telegram Bot (grammy)
-│   │   ├── console.ts         # Console-Alerts (pino)
-│   │   └── service.ts         # Alert-Router
-│   ├── cli/
-│   │   └── index.ts           # CLI Commands
-│   ├── db/
-│   │   ├── connection.ts      # SQLite-Verbindung (sql.js WASM)
-│   │   ├── migrations.ts      # Schema-Migrations
-│   │   └── queries.ts         # Prepared Statements
-│   └── utils/
-│       ├── logger.ts          # Pino-Logger
-│       ├── formatting.ts      # USD/EUR/Prozent-Formatierung
-│       └── retry.ts           # Retry-Logic für RPC-Calls
-├── config.yaml                # Konfiguration
-├── .env.example               # Environment-Variablen Template
-├── ecosystem.config.cjs       # PM2-Konfiguration
-├── ARCHITECTURE.md            # Architektur-Dokumentation
-└── package.json
+│   ├── index.ts               # Entry Point
+│   ├── config/                # Zod Schema + Multi-Profile Loader
+│   ├── chain/                 # Base Event Listener, Escrow Manager, Signer
+│   ├── engine/                # Order Manager, Spread Engine, P&L, Recycle, Competition
+│   ├── alerts/                # Telegram, Discord, Console
+│   ├── api/                   # Fastify REST API
+│   ├── forex/                 # EUR/USD Poller (ECB)
+│   ├── revolut/               # Revolut API Client, Webhook, Matcher
+│   ├── cli/                   # Commander.js CLI
+│   ├── db/                    # SQLite (sql.js WASM)
+│   └── utils/                 # Logger, Formatting, Retry
+├── Dockerfile                 # Multi-Stage Build
+├── docker-compose.yml
+├── config.yaml
+├── ecosystem.config.cjs       # PM2
+└── vitest.config.ts           # Test Config
 ```
 
 ### Datenfluss
 
 ```
-Base RPC → Chain Listener → Order Manager → Alert Service → Telegram/Console
-                                 ↓
-                              SQLite ← CLI (read-only)
+Base RPC ──→ Chain Listener ──→ Order Manager ──→ Alert Service ──→ Telegram/Discord
+                  │                   │                                     │
+                  ▼                   ▼                                     ▼
+            Escrow Manager      SQLite DB ←── CLI / REST API          Console
+                  │                   ▲
+                  ▼                   │
+            Spread Engine ←── Forex Poller (ECB)
+                  │
+                  ▼
+            Competition Analyzer
 ```
 
 ---
@@ -319,21 +266,23 @@ Base RPC → Chain Listener → Order Manager → Alert Service → Telegram/Con
 ## Entwicklung
 
 ```bash
-# TypeScript kompilieren
-npm run build
-
-# Entwicklung mit Auto-Reload
-npm run dev
-
-# Type-Check ohne Build
-npm run typecheck
-
-# Tests ausführen
-npm test
-
-# CLI direkt ausführen (ohne Build)
-npx tsx src/cli/index.ts status
+npm run build       # TypeScript kompilieren
+npm run dev         # Entwicklung mit Auto-Reload
+npm run typecheck   # Type-Check ohne Build
+npm test            # Unit Tests (vitest)
+npm run lint        # ESLint
 ```
+
+### Tests
+
+83 Unit Tests, 75%+ Statement Coverage auf Core Engine:
+
+```bash
+npm test                        # Alle Tests
+npx vitest run --coverage       # Mit Coverage Report
+```
+
+Getestete Module: config/schema, config/loader, engine/spread-engine, engine/order-manager, engine/pnl-tracker, engine/recycle-manager, utils/formatting, utils/retry.
 
 ---
 
@@ -343,19 +292,31 @@ npx tsx src/cli/index.ts status
 |------------|---------------|
 | Escrow | `0x2f121CDDCA6d652f35e8B3E560f9760898888888` |
 | Orchestrator | `0x88888883Ed048FF0a415271B28b2F52d431810D0` |
+| ProtocolViewer | `0x30B03De22328074Fbe8447C425ae988797146606` |
 | USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 
-### Events die der Bot überwacht
+### Events
 
 | Event | Contract | Bedeutung |
 |-------|----------|----------|
-| `IntentSignaled` | Orchestrator | Neue Kauf-Order für deinen Deposit |
-| `FundsLocked` | Escrow | Kapital für Intent gesperrt |
-| `FundsUnlockedAndTransferred` | Escrow | Fill abgeschlossen, USDC an Buyer |
-| `IntentFulfilled` | Orchestrator | Fill-Bestätigung |
+| `IntentSignaled` | Orchestrator | Neue Kauf-Order |
+| `FundsLocked` | Escrow | Kapital gesperrt |
+| `FundsUnlockedAndTransferred` | Escrow | Fill abgeschlossen |
+| `IntentFulfilled` | Orchestrator | Fill-Bestatigung |
+
+---
+
+## Security
+
+- Private Keys werden nie geloggt und nur aus Environment-Variablen gelesen
+- API-Auth verwendet timing-safe Vergleiche (kein Timing-Attack)
+- Webhook HMAC-Validierung mit `timingSafeEqual`
+- Alle SQL-Queries sind parameterisiert (kein SQL-Injection)
+- API und Webhook Server binden nur auf `127.0.0.1`
+- Keine Secrets in Config-Dateien (nur in `.env`)
 
 ---
 
 ## Lizenz
 
-Private Repository. Open-Source-Veröffentlichung (MIT) geplant nach Phase 5.
+MIT License. Siehe [LICENSE](LICENSE).

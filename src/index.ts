@@ -26,10 +26,11 @@ import { createChildLogger } from './utils/logger.js';
 const log = createChildLogger('main');
 
 async function main(): Promise<void> {
-  log.info('Peer LP Assistant Bot v0.4.0 starting...');
+  log.info('Peer LP Assistant Bot v0.5.0 starting...');
 
-  // 1. Load config
-  const config = loadConfig();
+  // 1. Load config (profile from PEER_LP_PROFILE env or default)
+  const profileName = process.env.PEER_LP_PROFILE;
+  const config = loadConfig(undefined, profileName);
 
   // 2. Initialize database
   const db = await initDatabase(config.database.path);

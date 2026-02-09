@@ -7,7 +7,8 @@ const log = createChildLogger('signer');
 let wallet: Wallet | null = null;
 
 export function initSigner(config: AppConfig): Wallet | null {
-  const privateKey = process.env.PEER_LP_PRIVATE_KEY;
+  const envName = config.private_key_env ?? 'PEER_LP_PRIVATE_KEY';
+  const privateKey = process.env[envName];
 
   if (!privateKey) {
     log.warn('PEER_LP_PRIVATE_KEY not set — on-chain write operations disabled');

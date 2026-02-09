@@ -74,17 +74,52 @@ const databaseSchema = z.object({
   path: z.string().default('./data/peer-lp.db'),
 });
 
-export const configSchema = z.object({
-  version: z.number().int().default(1),
+// Per-profile settings (wallet + peer + spread + revolut per user)
+const profileSchema = z.object({
+  name: z.string().min(1),
   wallet: walletSchema,
-  chain: chainSchema.default({}),
   peer: peerSchema,
   spread: spreadSchema.default({}),
   revolut: revolutSchema.default({}),
   recycling: recyclingSchema.default({}),
+  private_key_env: z.string().default('PEER_LP_PRIVATE_KEY'),
+});
+
+export const configSchema = z.object({
+  version: z.number().int().default(1),
+  // Single-user (backward compatible)
+  wallet: walletSchema.optional(),
+  peer: peerSchema.optional(),
+  spread: spreadSchema.default({}),
+  revolut: revolutSchema.default({}),
+  recycling: recyclingSchema.default({}),
+  // Multi-user profiles
+  profiles: z.array(profileSchema).optional(),
+  // Shared settings
+  chain: chainSchema.default({}),
   alerts: alertsSchema.default({}),
   api: apiSchema.default({}),
   database: databaseSchema.default({}),
-});
+}).refine(
+  (cfg) => cfg.wallet != null || (cfg.profiles != null && cfg.profiles.length > 0),
+  { message: 'Either top-level wallet+peer or profiles[] must be defined' },
+);
 
-export type AppConfig = z.infer<typeof configSchema>;
+export type RawConfig = z.infer<typeof configSchema>;
+export type ProfileConfig = z.infer<typeof profileSchema>;
+
+/** Resolved config: single profile merged with shared settings */
+export interface AppConfig {
+  version: number;
+  wallet: { address: string };
+  chain: z.infer<typeof chainSchema>;
+  peer: z.infer<typeof peerSchema>;
+  spread: z.infer<typeof spreadSchema>;
+  revolut: z.infer<typeof revolutSchema>;
+  recycling: z.infer<typeof recyclingSchema>;
+  alerts: z.infer<typeof alertsSchema>;
+  api: z.infer<typeof apiSchema>;
+  database: z.infer<typeof databaseSchema>;
+  profile_name: string;
+  private_key_env: string;
+}

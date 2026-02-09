@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { timingSafeEqual } from 'node:crypto';
 import type { AppConfig } from '../config/schema.js';
 import type { OrderManager } from '../engine/order-manager.js';
 import type { PnlTracker } from '../engine/pnl-tracker.js';
@@ -25,9 +26,15 @@ export async function startApiServer(deps: ApiDependencies): Promise<void> {
 
   // Bearer auth middleware
   if (apiKey) {
+    const expectedAuth = Buffer.from(`Bearer ${apiKey}`);
     server.addHook('onRequest', async (request, reply) => {
       const auth = request.headers.authorization;
-      if (!auth || auth !== `Bearer ${apiKey}`) {
+      if (!auth) {
+        reply.code(401).send({ error: 'Unauthorized' });
+        return;
+      }
+      const authBuf = Buffer.from(auth);
+      if (authBuf.length !== expectedAuth.length || !timingSafeEqual(authBuf, expectedAuth)) {
         reply.code(401).send({ error: 'Unauthorized' });
       }
     });
