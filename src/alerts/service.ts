@@ -88,6 +88,24 @@ export function connectSpreadEngine(spreadEngine: SpreadEngine): void {
     });
   });
 
+  spreadEngine.on('autoAdjusted', (event) => {
+    const oldSpread = spreadEngine.rateToSpreadPercent(event.oldRate);
+    const newSpread = spreadEngine.rateToSpreadPercent(event.newRate);
+    sendAlert({
+      severity: 'warn',
+      title: 'Auto-Spread Adjusted',
+      body: `Deposit #${event.depositId}: ${formatPercent(oldSpread)} → ${formatPercent(newSpread)}\nTX: ${event.txHash}`,
+    });
+  });
+
+  spreadEngine.on('autoAdjustFailed', (event) => {
+    sendAlert({
+      severity: 'error',
+      title: 'Auto-Spread Failed',
+      body: `Deposit #${event.depositId}: ${event.error}`,
+    });
+  });
+
   log.info('Alert service connected to spread engine');
 }
 

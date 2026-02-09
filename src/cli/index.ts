@@ -11,6 +11,9 @@ import { SpreadEngine } from '../engine/spread-engine.js';
 import { PnlTracker } from '../engine/pnl-tracker.js';
 import { RecycleManager, RECYCLE_STATES } from '../engine/recycle-manager.js';
 import { RevolutMatcher } from '../revolut/matcher.js';
+import { initSigner } from '../chain/signer.js';
+import { EscrowManager } from '../chain/escrow-manager.js';
+import { CompetitionAnalyzer } from '../engine/competition.js';
 
 const program = new Command();
 
@@ -319,6 +322,170 @@ program
           matched.padEnd(10) +
           date,
         );
+      }
+      console.log('');
+    });
+  });
+
+// ── deposit sync ────────────────────────────────────────────
+program
+  .command('deposit-sync')
+  .description('Sync deposit data from on-chain to local DB')
+  .action(async () => {
+    await withDb(async () => {
+      const config = loadConfig(program.opts<{ config?: string }>().config);
+      const signer = initSigner(config);
+      if (!signer) {
+        console.error('\nError: PEER_LP_PRIVATE_KEY not set\n');
+        return;
+      }
+
+      const escrowManager = new EscrowManager(config, signer);
+      const balance = await escrowManager.getWalletBalance();
+      console.log(`\nWallet balance: ${formatUSD(balance)} USDC\n`);
+
+      for (const depositId of config.peer.deposit_ids) {
+        const info = await escrowManager.syncDeposit(depositId);
+        console.log(`Deposit #${depositId}:`);
+        console.log(`  Remaining:    ${formatUSD(info.remainingDeposits)} USDC`);
+        console.log(`  Outstanding:  ${formatUSD(info.outstandingIntentAmount)} USDC`);
+        console.log(`  Accepting:    ${info.acceptingIntents ? 'Yes' : 'No'}`);
+        console.log('');
+      }
+    });
+  });
+
+// ── deposit add-funds ───────────────────────────────────────
+program
+  .command('deposit-add <depositId> <amount>')
+  .description('Add USDC funds to an existing deposit')
+  .action(async (depositIdStr, amountStr) => {
+    await withDb(async () => {
+      const config = loadConfig(program.opts<{ config?: string }>().config);
+      const signer = initSigner(config);
+      if (!signer) {
+        console.error('\nError: PEER_LP_PRIVATE_KEY not set\n');
+        return;
+      }
+
+      const depositId = parseInt(depositIdStr, 10);
+      const amount = parseFloat(amountStr);
+      if (isNaN(depositId) || isNaN(amount) || amount <= 0) {
+        console.error('Error: invalid depositId or amount');
+        return;
+      }
+
+      const escrowManager = new EscrowManager(config, signer);
+      console.log(`\nAdding ${formatUSD(amount)} USDC to deposit #${depositId}...`);
+      const txHash = await escrowManager.addFunds(depositId, amount);
+      console.log(`Done! TX: ${txHash}\n`);
+    });
+  });
+
+// ── deposit withdraw ────────────────────────────────────────
+program
+  .command('deposit-withdraw <depositId> <amount>')
+  .description('Remove USDC funds from a deposit')
+  .action(async (depositIdStr, amountStr) => {
+    await withDb(async () => {
+      const config = loadConfig(program.opts<{ config?: string }>().config);
+      const signer = initSigner(config);
+      if (!signer) {
+        console.error('\nError: PEER_LP_PRIVATE_KEY not set\n');
+        return;
+      }
+
+      const depositId = parseInt(depositIdStr, 10);
+      const amount = parseFloat(amountStr);
+      if (isNaN(depositId) || isNaN(amount) || amount <= 0) {
+        console.error('Error: invalid depositId or amount');
+        return;
+      }
+
+      const escrowManager = new EscrowManager(config, signer);
+      console.log(`\nWithdrawing ${formatUSD(amount)} USDC from deposit #${depositId}...`);
+      const txHash = await escrowManager.removeFunds(depositId, amount);
+      console.log(`Done! TX: ${txHash}\n`);
+    });
+  });
+
+// ── deposit pause/resume ────────────────────────────────────
+program
+  .command('deposit-pause <depositId>')
+  .description('Pause accepting new intents on a deposit')
+  .action(async (depositIdStr) => {
+    await withDb(async () => {
+      const config = loadConfig(program.opts<{ config?: string }>().config);
+      const signer = initSigner(config);
+      if (!signer) {
+        console.error('\nError: PEER_LP_PRIVATE_KEY not set\n');
+        return;
+      }
+
+      const depositId = parseInt(depositIdStr, 10);
+      const escrowManager = new EscrowManager(config, signer);
+      console.log(`\nPausing deposit #${depositId}...`);
+      const txHash = await escrowManager.setAcceptingIntents(depositId, false);
+      console.log(`Paused! TX: ${txHash}\n`);
+    });
+  });
+
+program
+  .command('deposit-resume <depositId>')
+  .description('Resume accepting new intents on a deposit')
+  .action(async (depositIdStr) => {
+    await withDb(async () => {
+      const config = loadConfig(program.opts<{ config?: string }>().config);
+      const signer = initSigner(config);
+      if (!signer) {
+        console.error('\nError: PEER_LP_PRIVATE_KEY not set\n');
+        return;
+      }
+
+      const depositId = parseInt(depositIdStr, 10);
+      const escrowManager = new EscrowManager(config, signer);
+      console.log(`\nResuming deposit #${depositId}...`);
+      const txHash = await escrowManager.setAcceptingIntents(depositId, true);
+      console.log(`Resumed! TX: ${txHash}\n`);
+    });
+  });
+
+// ── competition ─────────────────────────────────────────────
+program
+  .command('competition')
+  .description('Analyze competitor deposits (same payment method + currency)')
+  .action(async () => {
+    await withDb(async () => {
+      const config = loadConfig(program.opts<{ config?: string }>().config);
+      const analyzer = new CompetitionAnalyzer(config);
+
+      console.log(`\nScanning deposits for ${config.peer.payment_method}/${config.peer.currency} competitors...\n`);
+      const snapshot = await analyzer.analyze();
+
+      if (snapshot.competitors.length === 0) {
+        console.log('No active competitors found.\n');
+        return;
+      }
+
+      console.log(`Found ${snapshot.competitors.length} competitors | Total liquidity: ${formatUSD(snapshot.totalLiquidity)} USDC\n`);
+
+      console.log(
+        'Deposit'.padEnd(10) +
+        'Liquidity'.padEnd(14) +
+        'Depositor'.padEnd(14),
+      );
+      console.log('-'.repeat(38));
+
+      for (const c of snapshot.competitors.slice(0, 20)) {
+        console.log(
+          `#${c.depositId}`.padEnd(10) +
+          formatUSD(c.availableLiquidity).padEnd(14) +
+          `${c.depositor.slice(0, 6)}...${c.depositor.slice(-4)}`.padEnd(14),
+        );
+      }
+
+      if (snapshot.competitors.length > 20) {
+        console.log(`  ... and ${snapshot.competitors.length - 20} more`);
       }
       console.log('');
     });
